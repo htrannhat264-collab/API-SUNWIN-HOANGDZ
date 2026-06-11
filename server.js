@@ -1,4 +1,4 @@
-// server.js - CAO THỦ TÀI XỈU v4.0 (Học từ 467 phiên)
+// server.js - CAO THỦ TÀI XỈU v5.0 (FULL with Watchdog & Auto Reconnect)
 const WebSocket = require('ws');
 const express = require('express');
 const cors = require('cors');
@@ -26,33 +26,19 @@ if (fs.existsSync(HISTORY_FILE)) {
     } catch (e) {}
 }
 
-// ==================== PHÂN TÍCH DỮ LIỆU THỰC TẾ ====================
-// Thống kê từ 467 phiên của bạn
-const REAL_STATS = {
-    tongPhien: 467,
-    tai: 227,
-    xiu: 240,
-    tiLeTai: 48.6,
-    tiLeXiu: 51.4
-};
-
 // ==================== THUẬT TOÁN CAO THỦ ====================
 
 class CaoThuTaiXiu {
     constructor() {
         // Bộ nhớ pattern đã học
         this.patternDB = {
-            // Pattern 3 mặt xúc xắc
             threeDice: new Map(),
-            // Pattern kết quả 5 phiên
             fiveResult: new Map(),
-            // Pattern tổng điểm
             totalPattern: new Map(),
-            // Độ tin cậy của từng loại cầu
             cauTrust: {
                 '1-1': 0.5,
                 '2-2': 0.5,
-                'bệt': 0.5,
+                'bet': 0.5,
                 '3-3': 0.5,
                 '2-1-2': 0.5
             }
@@ -62,7 +48,8 @@ class CaoThuTaiXiu {
         this.recentPredictions = [];
         this.recentResults = [];
         this.consecutiveWrong = 0;
-        this.mode = 'normal'; // normal, cautious, aggressive
+        this.mode = 'normal';
+        this.lastStrategy = 'unknown';
         
         // Tải pattern DB nếu có
         this.loadPatternDB();
@@ -78,7 +65,7 @@ class CaoThuTaiXiu {
                 this.patternDB.threeDice = new Map(Object.entries(data.threeDice || {}));
                 this.patternDB.fiveResult = new Map(Object.entries(data.fiveResult || {}));
                 this.patternDB.totalPattern = new Map(Object.entries(data.totalPattern || {}));
-                this.cauTrust = data.cauTrust || this.cauTrust;
+                this.patternDB.cauTrust = data.cauTrust || this.patternDB.cauTrust;
                 console.log('[📂] Đã tải Pattern DB');
             } catch (e) {}
         }
@@ -89,14 +76,13 @@ class CaoThuTaiXiu {
             threeDice: Object.fromEntries(this.patternDB.threeDice),
             fiveResult: Object.fromEntries(this.patternDB.fiveResult),
             totalPattern: Object.fromEntries(this.patternDB.totalPattern),
-            cauTrust: this.cauTrust
+            cauTrust: this.patternDB.cauTrust
         };
         try {
             fs.writeFileSync(PATTERN_DB_FILE, JSON.stringify(data, null, 2));
         } catch (e) {}
     }
     
-    // HỌC TỪ LỊCH SỬ 467 PHIÊN
     learnFromHistory() {
         if (resultHistory.length < 50) return;
         
@@ -145,7 +131,7 @@ class CaoThuTaiXiu {
             stat.total++;
         }
         
-        // 4. Tính độ tin cậy cho từng loại cầu dựa trên dữ liệu thực
+        // 4. Tính độ tin cậy cho từng loại cầu
         this.calculateCauTrust();
         
         this.savePatternDB();
@@ -153,8 +139,8 @@ class CaoThuTaiXiu {
     }
     
     calculateCauTrust() {
-        // Phân tích các cầu từ lịch sử
         const results = resultHistory.map(h => h.Ket_qua);
+        if (results.length < 50) return;
         
         // Cầu 1-1
         let cau11Dung = 0, cau11Tong = 0;
@@ -164,7 +150,7 @@ class CaoThuTaiXiu {
                 if (results[i+1] !== results[i]) cau11Dung++;
             }
         }
-        this.cauTrust['1-1'] = cau11Tong > 0 ? cau11Dung / cau11Tong : 0.5;
+        this.patternDB.cauTrust['1-1'] = cau11Tong > 0 ? Math.min(0.85, cau11Dung / cau11Tong) : 0.5;
         
         // Cầu 2-2
         let cau22Dung = 0, cau22Tong = 0;
@@ -174,7 +160,7 @@ class CaoThuTaiXiu {
                 if (results[i+1] !== results[i]) cau22Dung++;
             }
         }
-        this.cauTrust['2-2'] = cau22Tong > 0 ? cau22Dung / cau22Tong : 0.5;
+        this.patternDB.cauTrust['2-2'] = cau22Tong > 0 ? Math.min(0.85, cau22Dung / cau22Tong) : 0.5;
         
         // Cầu bệt
         let betDung = 0, betTong = 0;
@@ -184,12 +170,12 @@ class CaoThuTaiXiu {
                 if (results[i+1] === results[i]) betDung++;
             }
         }
-        this.cauTrust['bệt'] = betTong > 0 ? betDung / betTong : 0.5;
+        this.patternDB.cauTrust['bet'] = betTong > 0 ? Math.min(0.85, betDung / betTong) : 0.5;
         
-        console.log(`📊 Độ tin cậy cầu: 1-1=${(this.cauTrust['1-1']*100).toFixed(0)}%, 2-2=${(this.cauTrust['2-2']*100).toFixed(0)}%, bệt=${(this.cauTrust['bệt']*100).toFixed(0)}%`);
+        console.log(`📊 Độ tin cậy cầu: 1-1=${(this.patternDB.cauTrust['1-1']*100).toFixed(0)}%, 2-2=${(this.patternDB.cauTrust['2-2']*100).toFixed(0)}%, bệt=${(this.patternDB.cauTrust['bet']*100).toFixed(0)}%`);
     }
     
-    // ==================== CHIẾN LƯỢC 1: TRUY VẤN PATTERN 3 MẶT XÚC XẮC ====================
+    // Phân tích pattern xúc xắc
     analyzeThreeDice(d1, d2, d3) {
         const diceKey = `${d1}${d2}${d3}`;
         const stat = this.patternDB.threeDice.get(diceKey);
@@ -197,19 +183,19 @@ class CaoThuTaiXiu {
         if (stat && stat.total >= 3) {
             const taiRatio = stat.Tai / stat.total;
             const prediction = taiRatio > 0.5 ? 'Tài' : 'Xỉu';
-            const confidence = Math.abs(taiRatio - 0.5) * 2;
+            const confidence = Math.min(0.85, Math.abs(taiRatio - 0.5) * 2);
             
             return {
                 prediction: prediction,
-                confidence: Math.min(confidence, 0.85),
+                confidence: confidence,
                 weight: 1.2,
-                reason: `Pattern xúc xắc ${diceKey}: ${prediction} ${(taiRatio*100).toFixed(0)}% (${stat.Tai}/${stat.total})`
+                reason: `🎲 Pattern ${diceKey}: ${prediction} (${stat.Tai}/${stat.total})`
             };
         }
         return null;
     }
     
-    // ==================== CHIẾN LƯỢC 2: PHÂN TÍCH CHUỖI 5 KẾT QUẢ ====================
+    // Phân tích pattern 5 kết quả
     analyzeFiveResult(results) {
         if (results.length < 5) return null;
         
@@ -220,38 +206,38 @@ class CaoThuTaiXiu {
         if (stat && stat.total >= 2) {
             const taiRatio = stat.Tai / stat.total;
             const prediction = taiRatio > 0.5 ? 'Tài' : 'Xỉu';
-            const confidence = Math.abs(taiRatio - 0.5) * 1.5;
+            const confidence = Math.min(0.9, Math.abs(taiRatio - 0.5) * 1.8);
             
             return {
                 prediction: prediction,
-                confidence: Math.min(confidence, 0.9),
+                confidence: confidence,
                 weight: 1.3,
-                reason: `Pattern 5 phiên "${pattern}": ${prediction} (${stat.Tai}/${stat.total})`
+                reason: `📊 Pattern "${pattern}": ${prediction} (${stat.Tai}/${stat.total})`
             };
         }
         return null;
     }
     
-    // ==================== CHIẾN LƯỢC 3: PHÂN TÍCH TỔNG ĐIỂM ====================
+    // Phân tích tổng điểm
     analyzeTotal(total) {
         const stat = this.patternDB.totalPattern.get(total.toString());
         
         if (stat && stat.total >= 5) {
             const taiRatio = stat.Tai / stat.total;
             const prediction = taiRatio > 0.5 ? 'Tài' : 'Xỉu';
-            const confidence = Math.abs(taiRatio - 0.5) * 1.5;
+            const confidence = Math.min(0.85, Math.abs(taiRatio - 0.5) * 1.5);
             
             return {
                 prediction: prediction,
-                confidence: Math.min(confidence, 0.85),
+                confidence: confidence,
                 weight: 1.1,
-                reason: `Tổng ${total} điểm: ${prediction} ${(taiRatio*100).toFixed(0)}% (${stat.Tai}/${stat.total})`
+                reason: `🔢 Tổng ${total}: ${prediction} (${stat.Tai}/${stat.total})`
             };
         }
         return null;
     }
     
-    // ==================== CHIẾN LƯỢC 4: CẦU 1-1, 2-2, BỆT CÓ TRỌNG SỐ ====================
+    // Cầu cổ điển có trọng số
     analyzeClassicCau(results) {
         if (results.length < 4) return null;
         
@@ -260,44 +246,44 @@ class CaoThuTaiXiu {
         
         // Cầu 1-1
         if (last4[0] !== last4[1] && last4[1] !== last4[2] && last4[2] !== last4[3]) {
-            const trust = this.cauTrust['1-1'];
+            const trust = this.patternDB.cauTrust['1-1'];
             const prediction = last4[3] === 'Tài' ? 'Xỉu' : 'Tài';
             return {
                 prediction: prediction,
-                confidence: 0.6 + trust * 0.2,
+                confidence: Math.min(0.8, 0.55 + trust * 0.25),
                 weight: trust,
-                reason: `Cầu 1-1 (độ tin cậy ${(trust*100).toFixed(0)}%)`
+                reason: `🔄 Cầu 1-1 (độ tin ${(trust*100).toFixed(0)}%)`
             };
         }
         
         // Cầu 2-2
         if (last4[0] === last4[1] && last4[1] !== last4[2] && last4[2] === last4[3]) {
-            const trust = this.cauTrust['2-2'];
+            const trust = this.patternDB.cauTrust['2-2'];
             const prediction = last4[3] === 'Tài' ? 'Xỉu' : 'Tài';
             return {
                 prediction: prediction,
-                confidence: 0.6 + trust * 0.2,
+                confidence: Math.min(0.8, 0.55 + trust * 0.25),
                 weight: trust,
-                reason: `Cầu 2-2 (độ tin cậy ${(trust*100).toFixed(0)}%)`
+                reason: `🔄 Cầu 2-2 (độ tin ${(trust*100).toFixed(0)}%)`
             };
         }
         
         // Cầu bệt
         if (last3[0] === last3[1] && last3[1] === last3[2]) {
-            const trust = this.cauTrust['bệt'];
+            const trust = this.patternDB.cauTrust['bet'];
             const prediction = last3[0];
             return {
                 prediction: prediction,
-                confidence: 0.55 + trust * 0.25,
+                confidence: Math.min(0.8, 0.55 + trust * 0.3),
                 weight: trust,
-                reason: `Cầu bệt (độ tin cậy ${(trust*100).toFixed(0)}%)`
+                reason: `📈 Cầu bệt (độ tin ${(trust*100).toFixed(0)}%)`
             };
         }
         
         return null;
     }
     
-    // ==================== CHIẾN LƯỢC 5: CHỐNG LỆCH BẰNG THỐNG KÊ ====================
+    // Cân bằng lệch
     analyzeBalance(results) {
         if (results.length < 20) return null;
         
@@ -305,26 +291,24 @@ class CaoThuTaiXiu {
         const taiCount = last20.filter(r => r === 'Tài').length;
         const xiuCount = 20 - taiCount;
         
-        // Nếu lệch quá 6 phiên
         if (Math.abs(taiCount - xiuCount) >= 6) {
             const prediction = taiCount > xiuCount ? 'Xỉu' : 'Tài';
-            const confidence = 0.55 + Math.abs(taiCount - xiuCount) / 40;
+            const confidence = Math.min(0.75, 0.55 + Math.abs(taiCount - xiuCount) / 40);
             return {
                 prediction: prediction,
-                confidence: Math.min(confidence, 0.75),
+                confidence: confidence,
                 weight: 0.9,
-                reason: `Cân bằng: ${taiCount}T-${xiuCount}X → ${prediction}`
+                reason: `⚖️ Cân bằng: ${taiCount}T-${xiuCount}X → ${prediction}`
             };
         }
         return null;
     }
     
-    // ==================== CHIẾN LƯỢC 6: DỰ ĐOÁN THEO CHU KỲ ====================
+    // Phân tích chu kỳ
     analyzeCycle(results) {
         if (results.length < 30) return null;
         
-        // Tìm chu kỳ phổ biến
-        const cycles = [3, 4, 5, 6, 7, 8];
+        const cycles = [3, 4, 5, 6, 7];
         let bestCycle = null;
         let bestMatch = 0;
         
@@ -356,30 +340,53 @@ class CaoThuTaiXiu {
             if (nextInCycle) {
                 return {
                     prediction: nextInCycle,
-                    confidence: 0.55 + bestMatch * 0.05,
-                    weight: 0.8,
-                    reason: `Chu kỳ ${bestCycle} phiên (lặp ${bestMatch} lần)`
+                    confidence: Math.min(0.75, 0.55 + bestMatch * 0.05),
+                    weight: 0.85,
+                    reason: `🔄 Chu kỳ ${bestCycle}p (lặp ${bestMatch}x)`
                 };
             }
         }
         return null;
     }
     
-    // ==================== XỬ LÝ MÂU THUẪN THÔNG MINH ====================
+    // Xu hướng dài hạn
+    analyzeTrend(results) {
+        if (results.length < 15) return null;
+        
+        const last15 = results.slice(-15);
+        const taiCount = last15.filter(r => r === 'Tài').length;
+        
+        if (taiCount >= 10) {
+            return {
+                prediction: 'Xỉu',
+                confidence: 0.6,
+                weight: 0.8,
+                reason: `📉 Xu hướng Tài mạnh (${taiCount}/15) → Xỉu`
+            };
+        }
+        if (taiCount <= 5) {
+            return {
+                prediction: 'Tài',
+                confidence: 0.6,
+                weight: 0.8,
+                reason: `📈 Xu hướng Xỉu mạnh (${15-taiCount}/15) → Tài`
+            };
+        }
+        return null;
+    }
+    
+    // Xử lý mâu thuẫn thông minh
     resolveConflicts(predictions) {
         if (predictions.length === 0) return null;
         
-        // Phân loại theo confidence và weight
         const taiPredictions = predictions.filter(p => p.prediction === 'Tài');
         const xiuPredictions = predictions.filter(p => p.prediction === 'Xỉu');
         
-        // Tính tổng trọng số có điều chỉnh
         let taiScore = taiPredictions.reduce((sum, p) => sum + (p.confidence * p.weight), 0);
         let xiuScore = xiuPredictions.reduce((sum, p) => sum + (p.confidence * p.weight), 0);
         
-        // Nếu đang trong chế độ cautious (đang thua nhiều)
+        // Điều chỉnh theo chế độ
         if (this.mode === 'cautious') {
-            // Ưu tiên dự đoán ngược với xu hướng
             const lastResults = this.recentResults.slice(-5);
             const taiRecent = lastResults.filter(r => r === 'Tài').length;
             if (taiRecent >= 3) xiuScore *= 1.3;
@@ -391,68 +398,64 @@ class CaoThuTaiXiu {
         
         const taiRatio = taiScore / totalScore;
         const prediction = taiRatio > 0.5 ? 'Tài' : 'Xỉu';
-        const confidence = Math.abs(taiRatio - 0.5) * 2;
+        const confidence = Math.min(0.92, Math.abs(taiRatio - 0.5) * 2);
         
-        // Tìm lý do chính
         const mainReason = taiRatio > 0.5 ? 
             taiPredictions.sort((a,b) => b.confidence - a.confidence)[0] :
             xiuPredictions.sort((a,b) => b.confidence - a.confidence)[0];
         
         return {
             prediction: prediction,
-            confidence: Math.min(confidence, 0.92),
+            confidence: confidence,
             taiRatio: taiRatio,
             mainReason: mainReason?.reason || 'Ensemble tổng hợp',
             conflictCount: Math.abs(taiPredictions.length - xiuPredictions.length)
         };
     }
     
-    // ==================== CHIẾN LƯỢC TỔNG HỢP ====================
+    // Tổng hợp dự đoán
     superPredict(history, d1, d2, d3, total) {
         const results = history.map(h => h.Ket_qua);
         
-        // Thu thập tất cả dự đoán
         const predictions = [];
         
-        // 1. Pattern xúc xắc
         const dicePred = this.analyzeThreeDice(d1, d2, d3);
         if (dicePred) predictions.push(dicePred);
         
-        // 2. Pattern 5 kết quả
         const fivePred = this.analyzeFiveResult(results);
         if (fivePred) predictions.push(fivePred);
         
-        // 3. Pattern tổng điểm
         const totalPred = this.analyzeTotal(total);
         if (totalPred) predictions.push(totalPred);
         
-        // 4. Cầu cổ điển
         const cauPred = this.analyzeClassicCau(results);
         if (cauPred) predictions.push(cauPred);
         
-        // 5. Cân bằng
         const balancePred = this.analyzeBalance(results);
         if (balancePred) predictions.push(balancePred);
         
-        // 6. Chu kỳ
         const cyclePred = this.analyzeCycle(results);
         if (cyclePred) predictions.push(cyclePred);
         
-        // Xử lý mâu thuẫn
+        const trendPred = this.analyzeTrend(results);
+        if (trendPred) predictions.push(trendPred);
+        
         const final = this.resolveConflicts(predictions);
         
         if (!final) {
-            // Fallback: theo xu hướng 10 phiên
             const last10 = results.slice(-10);
             const taiCount = last10.filter(r => r === 'Tài').length;
+            this.lastStrategy = 'trend_10';
             return {
                 prediction: taiCount >= 5 ? 'Tài' : 'Xỉu',
                 confidence: 0.55,
                 taiRatio: taiCount / 10,
-                mainReason: 'Xu hướng 10 phiên'
+                mainReason: '📊 Xu hướng 10 phiên',
+                conflictCount: 0
             };
         }
         
+        this.lastStrategy = final.mainReason;
         return final;
     }
     
@@ -460,52 +463,38 @@ class CaoThuTaiXiu {
     update(actual, predicted, confidence) {
         const correct = actual === predicted;
         
-        // Cập nhật bộ nhớ
         this.recentResults.push(actual);
         if (this.recentResults.length > 50) this.recentResults.shift();
         
         this.recentPredictions.push({ predicted, correct, confidence });
         if (this.recentPredictions.length > 20) this.recentPredictions.shift();
         
-        // Cập nhật chế độ
         if (correct) {
             this.consecutiveWrong = 0;
         } else {
             this.consecutiveWrong++;
         }
         
-        // Điều chỉnh chế độ chơi
+        // Điều chỉnh chế độ
         if (this.consecutiveWrong >= 3) {
             this.mode = 'cautious';
         } else if (this.consecutiveWrong === 0 && this.mode === 'cautious') {
             this.mode = 'normal';
         }
         
-        // Cập nhật độ tin cậy cầu dựa trên kết quả thực tế
+        // Cập nhật độ tin cậy cầu
         this.updateCauTrust(actual);
         
         return correct;
     }
     
     updateCauTrust(actual) {
-        // Cập nhật nhẹ độ tin cậy (chỉ 1%)
-        if (actual === 'Tài') {
-            this.cauTrust['1-1'] = this.cauTrust['1-1'] * 0.99 + 0.01;
-            this.cauTrust['2-2'] = this.cauTrust['2-2'] * 0.99 + 0.01;
-            this.cauTrust['bệt'] = this.cauTrust['bệt'] * 0.99 + 0.01;
-        } else {
-            this.cauTrust['1-1'] = this.cauTrust['1-1'] * 0.99;
-            this.cauTrust['2-2'] = this.cauTrust['2-2'] * 0.99;
-            this.cauTrust['bệt'] = this.cauTrust['bệt'] * 0.99;
-        }
-        
-        // Giới hạn
-        for (let key in this.cauTrust) {
-            this.cauTrust[key] = Math.max(0.3, Math.min(0.8, this.cauTrust[key]));
+        const factor = actual === 'Tài' ? 1.01 : 0.99;
+        for (let key in this.patternDB.cauTrust) {
+            this.patternDB.cauTrust[key] = Math.max(0.35, Math.min(0.85, this.patternDB.cauTrust[key] * factor));
         }
     }
     
-    // Lấy thống kê
     getStats() {
         const recent20 = this.recentPredictions.slice(-20);
         const accuracy = recent20.length > 0 ? 
@@ -515,12 +504,13 @@ class CaoThuTaiXiu {
             mode: this.mode,
             consecutiveWrong: this.consecutiveWrong,
             recentAccuracy: accuracy.toFixed(1),
+            lastStrategy: this.lastStrategy,
             patternCount: {
                 threeDice: this.patternDB.threeDice.size,
                 fiveResult: this.patternDB.fiveResult.size,
                 totalPattern: this.patternDB.totalPattern.size
             },
-            cauTrust: this.cauTrust
+            cauTrust: this.patternDB.cauTrust
         };
     }
 }
@@ -533,7 +523,8 @@ let lastPrediction = null;
 let stats = { total: 0, correct: 0, wrong: 0, consecutiveLosses: 0 };
 let last10Results = [];
 
-// ==================== WEBSOCKET ====================
+// ==================== WEBSOCKET WITH WATCHDOG ====================
+
 const WEBSOCKET_URL = "wss://websocket.azhkthg1.net/websocket?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJhbW91bnQiOjAsInVzZXJuYW1lIjoiU0NfYXBpc3Vud2luMTIzIn0.hgrRbSV6vnBwJMg9ZFtbx3rRu9mX_hZMZ_m5gMNhkw0";
 const WS_HEADERS = { "User-Agent": "Mozilla/5.0", "Origin": "https://play.sun.win" };
 const RECONNECT_DELAY = 2500;
@@ -548,6 +539,10 @@ const initialMessages = [
 let ws = null;
 let pingInterval = null;
 let reconnectTimeout = null;
+let lastMessageTime = Date.now();
+let watchdogInterval = null;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 10;
 
 function saveHistory(entry) {
     resultHistory.push(entry);
@@ -557,33 +552,88 @@ function saveHistory(entry) {
     } catch (e) {}
 }
 
-function connectWebSocket() {
-    if (ws) { ws.removeAllListeners(); ws.close(); }
+// Watchdog - kiểm tra kết nối
+function startWatchdog() {
+    if (watchdogInterval) clearInterval(watchdogInterval);
     
-    console.log('[🔌] Kết nối WebSocket Cao Thủ...');
+    watchdogInterval = setInterval(() => {
+        const timeSinceLastMessage = (Date.now() - lastMessageTime) / 1000;
+        
+        if (timeSinceLastMessage > 60) {
+            console.log(`[⚠️] ${timeSinceLastMessage.toFixed(0)}s không có dữ liệu`);
+            
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                try {
+                    ws.ping();
+                } catch (e) {
+                    console.log('[❌] Ping thất bại');
+                    ws.terminate();
+                }
+            } else {
+                console.log('[🔌] WebSocket đã đóng, kết nối lại...');
+                connectWebSocket();
+            }
+        }
+        
+        if (timeSinceLastMessage > 120) {
+            console.log('[🚨] Quá 120s không có dữ liệu, force reconnect!');
+            if (ws) ws.terminate();
+            connectWebSocket();
+        }
+    }, 30000);
+}
+
+function connectWebSocket() {
+    if (ws) {
+        try {
+            ws.removeAllListeners();
+            ws.terminate();
+        } catch (e) {}
+        ws = null;
+    }
+    
+    console.log(`[🔌] Kết nối WebSocket (lần ${reconnectAttempts + 1})...`);
     ws = new WebSocket(WEBSOCKET_URL, { headers: WS_HEADERS });
     
+    const connectionTimeout = setTimeout(() => {
+        if (ws && ws.readyState !== WebSocket.OPEN) {
+            console.log('[❌] Timeout kết nối');
+            ws.terminate();
+        }
+    }, 10000);
+    
     ws.on('open', () => {
+        clearTimeout(connectionTimeout);
         console.log('[✅] WebSocket đã kết nối!');
+        reconnectAttempts = 0;
+        lastMessageTime = Date.now();
+        
         initialMessages.forEach((msg, i) => {
             setTimeout(() => {
-                if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify(msg));
+                    console.log(`[📤] Đã gửi tin nhắn ${i + 1}`);
+                }
             }, i * 600);
         });
         
         clearInterval(pingInterval);
         pingInterval = setInterval(() => {
-            if (ws.readyState === WebSocket.OPEN) ws.ping();
+            if (ws && ws.readyState === WebSocket.OPEN) ws.ping();
         }, PING_INTERVAL);
     });
     
     ws.on('message', (message) => {
+        lastMessageTime = Date.now();
         try {
             const data = JSON.parse(message);
             if (!Array.isArray(data) || typeof data[1] !== 'object') return;
             const { cmd, sid, d1, d2, d3, gBB } = data[1];
             
-            if (cmd === 1008 && sid) currentSessionId = sid;
+            if (cmd === 1008 && sid) {
+                currentSessionId = sid;
+                console.log(`[📡] Session ID: ${sid}`);
+            }
             
             if (cmd === 1003 && gBB && d1 && d2 && d3) {
                 const total = d1 + d2 + d3;
@@ -601,22 +651,16 @@ function connectWebSocket() {
                         stats.consecutiveLosses++;
                     }
                     
-                    // Cập nhật cho cao thủ
                     caothu.update(result, lastPrediction.ket_qua, lastPrediction.do_tin_cay);
                     
-                    // Cập nhật last10
                     last10Results.push(predictionCorrect ? 1 : 0);
                     if (last10Results.length > 10) last10Results.shift();
                 }
                 
-                // Lấy thông tin stats
                 const caoThuStats = caothu.getStats();
-                
-                // Dự đoán phiên tiếp theo
                 const historyForAnalyzer = resultHistory.map(h => ({ Ket_qua: h.Ket_qua }));
                 const prediction = caothu.superPredict(historyForAnalyzer, d1, d2, d3, total);
                 
-                // Điều chỉnh nếu đang cautious
                 let finalPrediction = prediction.prediction;
                 let finalConfidence = prediction.confidence;
                 let mainReason = prediction.mainReason;
@@ -624,7 +668,7 @@ function connectWebSocket() {
                 if (caoThuStats.mode === 'cautious' && stats.consecutiveLosses >= 2) {
                     finalPrediction = finalPrediction === 'Tài' ? 'Xỉu' : 'Tài';
                     finalConfidence = 0.55;
-                    mainReason = `CHẾ ĐỘ THẬN TRỌNG (sai ${caoThuStats.consecutiveWrong} liên tiếp)`;
+                    mainReason = `⚠️ CHẾ ĐỘ THẬN TRỌNG (sai ${caoThuStats.consecutiveWrong} liên tiếp)`;
                 }
                 
                 lastPrediction = {
@@ -642,11 +686,9 @@ function connectWebSocket() {
                 console.log(`🎯 Xúc xắc: ${d1} ${d2} ${d3} (Tổng ${total}) → Kết quả: ${result} ${predictionCorrect ? '✅' : '❌'}`);
                 console.log(`🤖 Dự đoán tiếp: ${finalPrediction} | Độ tin cậy: ${(finalConfidence*100).toFixed(0)}%`);
                 console.log(`📊 Thống kê: ${stats.correct}/${stats.total} (${tiLe}) | 10 gần nhất: ${last10Acc}`);
-                console.log(`🧠 Chế độ: ${caoThuStats.mode} | Lý do: ${mainReason}`);
-                console.log(`📚 Pattern DB: Xúc xắc=${caoThuStats.patternCount.threeDice}, 5KQ=${caoThuStats.patternCount.fiveResult}`);
+                console.log(`🧠 Chế độ: ${caoThuStats.mode} | ${mainReason}`);
                 console.log(`=====================================\n`);
                 
-                // Lưu lịch sử
                 const historyEntry = {
                     phien: currentSessionId, Xuc_xac_1: d1, Xuc_xac_2: d2, Xuc_xac_3: d3,
                     Tong: total, Ket_qua: result, du_doan: lastPrediction.ket_qua,
@@ -657,26 +699,38 @@ function connectWebSocket() {
                 currentSessionId = null;
             }
         } catch (e) {
-            console.error('[❌] Lỗi:', e.message);
+            console.error('[❌] Lỗi xử lý message:', e.message);
         }
     });
     
-    ws.on('close', () => {
-        console.log('[🔌] Mất kết nối, kết nối lại sau 2.5s...');
+    ws.on('pong', () => {
+        lastMessageTime = Date.now();
+    });
+    
+    ws.on('close', (code, reason) => {
+        clearTimeout(connectionTimeout);
+        console.log(`[🔌] WebSocket đóng. Code: ${code}`);
         clearInterval(pingInterval);
+        
+        reconnectAttempts++;
+        const delay = Math.min(5000 * reconnectAttempts, 30000);
+        console.log(`[⏳] Thử lại sau ${delay/1000}s (lần ${reconnectAttempts})`);
+        
         clearTimeout(reconnectTimeout);
-        reconnectTimeout = setTimeout(connectWebSocket, RECONNECT_DELAY);
+        reconnectTimeout = setTimeout(() => {
+            connectWebSocket();
+        }, delay);
     });
     
     ws.on('error', (err) => {
+        clearTimeout(connectionTimeout);
         console.error('[❌] WebSocket lỗi:', err.message);
-        ws.close();
+        if (ws) ws.terminate();
     });
 }
 
 // ==================== API ====================
 app.get('/api/sieu', (req, res) => {
-    // Lấy dữ liệu mới nhất
     const lastEntry = resultHistory[resultHistory.length - 1];
     const caoThuStats = caothu.getStats();
     
@@ -702,7 +756,7 @@ app.get('/api/sieu', (req, res) => {
         };
         res.json(response);
     } else {
-        res.json({ status: "waiting", message: "Đang chờ dữ liệu..." });
+        res.json({ status: "waiting", message: "Đang chờ dữ liệu từ WebSocket..." });
     }
 });
 
@@ -720,23 +774,45 @@ app.get('/api/stats', (req, res) => {
 app.get('/api/history', (req, res) => res.json(resultHistory.slice(-30).reverse()));
 app.get('/api/patterns', (req, res) => res.json({
     threeDice: Array.from(caothu.patternDB.threeDice.entries()).slice(-20),
-    cauTrust: caothu.cauTrust
+    cauTrust: caothu.patternDB.cauTrust
 }));
+
+app.get('/api/ping', (req, res) => {
+    const timeSinceLastMessage = (Date.now() - lastMessageTime) / 1000;
+    res.json({
+        status: 'alive',
+        time: new Date().toISOString(),
+        lastMessage: `${timeSinceLastMessage.toFixed(0)}s ago`,
+        wsState: ws ? ws.readyState : 'null',
+        reconnectAttempts: reconnectAttempts,
+        stats: {
+            total: stats.total,
+            correct: stats.correct,
+            ti_le: stats.total > 0 ? ((stats.correct / stats.total) * 100).toFixed(1) + '%' : '0%'
+        }
+    });
+});
 
 app.get('/', (req, res) => res.json({ 
     status: 'active', 
-    message: 'CAO THỦ TÀI XỈU - Học từ 467 phiên', 
-    version: '4.0',
-    endpoints: ['/api/sieu', '/api/stats', '/api/history', '/api/patterns']
+    message: 'CAO THỦ TÀI XỈU v5.0 - Học từ lịch sử + Watchdog',
+    version: '5.0',
+    endpoints: ['/api/sieu', '/api/stats', '/api/history', '/api/patterns', '/api/ping']
 }));
 
+// ==================== START SERVER ====================
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n🏆 ===== CAO THỦ TÀI XỈU v4.0 =====`);
+    console.log(`\n🏆 ===== CAO THỦ TÀI XỈU v5.0 =====`);
     console.log(`🌐 API: http://0.0.0.0:${PORT}`);
     console.log(`📊 Đã học từ ${resultHistory.length} phiên lịch sử`);
-    console.log(`🧠 Chiến lược: Pattern Xúc xắc, 5 KQ, Tổng điểm, Cầu có trọng số, Chu kỳ, Cân bằng`);
-    console.log(`🎯 Mục tiêu: >55% độ chính xác`);
+    console.log(`🧠 Chiến lược: Pattern Xúc xắc | 5 KQ | Tổng điểm | Cầu có trọng số | Chu kỳ | Cân bằng | Xu hướng`);
+    console.log(`👁️ Watchdog: Tự động kiểm tra và reconnect mỗi 30s`);
     console.log(`====================================\n`);
 });
 
+// Khởi động WebSocket và Watchdog
 connectWebSocket();
+setTimeout(() => {
+    startWatchdog();
+    console.log('[👁️] Watchdog đã khởi động!');
+}, 5000);
