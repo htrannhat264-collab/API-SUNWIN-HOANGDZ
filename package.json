@@ -1,14 +1,15 @@
 {
-  "name": "sunwin-taixiu-api",
+  "name": "super-sunwin-lc79-api",
   "version": "1.0.0",
-  "description": "Sunwin Tài Xỉu API - 84 models",
-  "main": "apisun.js",
+  "description": "Sunwin + LC79 Tài Xỉu API",
+  "main": "server.js",
   "scripts": {
-    "start": "node apisun.js"
+    "start": "node server.js"
   },
   "dependencies": {
     "ws": "^8.16.0",
     "express": "^4.18.2",
+    "axios": "^1.6.0",
     "cors": "^2.8.5"
   }
 }
