@@ -1,3 +1,4 @@
+// apisun.js - Cập nhật link game Sunwin
 const WebSocket = require('ws');
 const express = require('express');
 const cors = require('cors');
@@ -27,11 +28,11 @@ if (fs.existsSync(HISTORY_FILE)) {
 if (resultHistory.length === 0) {
     console.log('[📝] Không có lịch sử, tạo dữ liệu mẫu...');
     const sampleData = [
-        { phien: 3134450, Xuc_xac_1: 6, Xuc_xac_2: 4, Xuc_xac_3: 1, Tong: 11, Ket_qua: "Tài", du_doan: "Tài", loai_cau: "Cầu bệt", do_tin_cay: "75%", thoi_gian: new Date().toISOString() },
-        { phien: 3134451, Xuc_xac_1: 3, Xuc_xac_2: 5, Xuc_xac_3: 2, Tong: 10, Ket_qua: "Xỉu", du_doan: "Xỉu", loai_cau: "Cầu đảo", do_tin_cay: "70%", thoi_gian: new Date().toISOString() },
-        { phien: 3134452, Xuc_xac_1: 4, Xuc_xac_2: 4, Xuc_xac_3: 4, Tong: 12, Ket_qua: "Tài", du_doan: "Tài", loai_cau: "Cầu bệt", do_tin_cay: "80%", thoi_gian: new Date().toISOString() },
-        { phien: 3134453, Xuc_xac_1: 2, Xuc_xac_2: 3, Xuc_xac_3: 1, Tong: 6, Ket_qua: "Xỉu", du_doan: "Xỉu", loai_cau: "Cầu 1-1", do_tin_cay: "78%", thoi_gian: new Date().toISOString() },
-        { phien: 3134454, Xuc_xac_1: 5, Xuc_xac_2: 2, Xuc_xac_3: 4, Tong: 11, Ket_qua: "Tài", du_doan: "Tài", loai_cau: "Xu hướng mạnh", do_tin_cay: "82%", thoi_gian: new Date().toISOString() }
+        { phien: 3134470, Xuc_xac_1: 4, Xuc_xac_2: 2, Xuc_xac_3: 3, Tong: 9, Ket_qua: "Xỉu", du_doan: "Xỉu", loai_cau: "Cầu bệt", do_tin_cay: "75%", thoi_gian: new Date().toISOString() },
+        { phien: 3134471, Xuc_xac_1: 5, Xuc_xac_2: 1, Xuc_xac_3: 6, Tong: 12, Ket_qua: "Tài", du_doan: "Tài", loai_cau: "Cầu đảo", do_tin_cay: "70%", thoi_gian: new Date().toISOString() },
+        { phien: 3134472, Xuc_xac_1: 3, Xuc_xac_2: 3, Xuc_xac_3: 3, Tong: 9, Ket_qua: "Xỉu", du_doan: "Xỉu", loai_cau: "Cầu bệt", do_tin_cay: "80%", thoi_gian: new Date().toISOString() },
+        { phien: 3134473, Xuc_xac_1: 6, Xuc_xac_2: 4, Xuc_xac_3: 1, Tong: 11, Ket_qua: "Tài", du_doan: "Xỉu", loai_cau: "Bẻ cầu 1-1", do_tin_cay: "71%", thoi_gian: new Date().toISOString() },
+        { phien: 3134474, Xuc_xac_1: 6, Xuc_xac_2: 5, Xuc_xac_3: 6, Tong: 17, Ket_qua: "Tài", du_doan: "Xỉu", loai_cau: "Bẻ cầu 1-1", do_tin_cay: "71%", thoi_gian: new Date().toISOString() }
     ];
     resultHistory.push(...sampleData);
     fs.writeFileSync(HISTORY_FILE, JSON.stringify(resultHistory, null, 2));
@@ -88,9 +89,15 @@ function saveModelWeights() {
 }
 
 // ==================== GLOBAL VARIABLES ====================
-let currentSessionId = null;
+let currentSessionId = 3134474;
 let lastResult = null;
-let lastPrediction = null;
+let lastPrediction = {
+    phien: 3134475,
+    ket_qua: "Xỉu",
+    loai_cau: "Bẻ cầu 1-1",
+    mau_cau: "Xỉu Tài Xỉu Tài",
+    do_tin_cay: "71%"
+};
 let stats = {
     total: 105,
     correct: 47,
@@ -100,19 +107,20 @@ let stats = {
 };
 
 let apiResponseData = {
-    "Phien": 3134454,
-    "Xuc_xac_1": 5,
-    "Xuc_xac_2": 2,
-    "Xuc_xac_3": 4,
-    "Tong": 11,
+    "Phien": 3134474,
+    "Xuc_xac_1": 6,
+    "Xuc_xac_2": 5,
+    "Xuc_xac_3": 6,
+    "Tong": 17,
     "Ket_qua": "Tài",
-    "Phien_hien_tai": 3134455,
-    "Du_doan": "Tài",
-    "Loai_cau": "Xu hướng mạnh",
-    "Mau_cau_phat_hien": "Tài Tài Xỉu Tài Tài",
-    "Do_tin_cay": "82%",
+    "Phien_hien_tai": 3134475,
+    "Du_doan": "Xỉu",
+    "Loai_cau": "Bẻ cầu 1-1",
+    "Mau_cau_phat_hien": "Xỉu Tài Xỉu Tài",
+    "Do_tin_cay": "71%",
     "Trang_thai": "Đang theo cầu",
-    "Ket_qua_du_doan": "",
+    "Ket_qua_du_doan": "❌",
+    "Link_game": "https://web.sunwin.tg/?affId=Sunwin",
     "Thong_ke": {
         "tong": 105,
         "dung": 47,
@@ -122,7 +130,7 @@ let apiResponseData = {
     "id": "@tranhoang2286"
 };
 
-// ==================== TAI XIU ANALYZER (GIỮ NGUYÊN) ====================
+// ==================== TAI XIU ANALYZER (GIỮ NGUYÊN THUẬT TOÁN) ====================
 
 class TaiXiuAnalyzer {
     constructor() {
@@ -635,7 +643,7 @@ function connectWebSocket() {
                 lastPrediction = { phien: currentSessionId ? parseInt(currentSessionId) + 1 : null, ket_qua: finalPrediction, loai_cau: finalType, mau_cau: finalPattern, do_tin_cay: (finalConfidence * 100).toFixed(0) + '%' };
                 let trangThai = finalType.includes('CHỐNG') ? 'Chống đảo' : (finalType.includes('THEO') ? 'Đang theo kết quả' : 'Đang theo cầu');
                 let tiLe = stats.total > 0 ? ((stats.correct / stats.total) * 100).toFixed(1) + '%' : '0%';
-                apiResponseData = { "Phien": currentSessionId, "Xuc_xac_1": d1, "Xuc_xac_2": d2, "Xuc_xac_3": d3, "Tong": total, "Ket_qua": result, "Phien_hien_tai": currentSessionId ? parseInt(currentSessionId) + 1 : null, "Du_doan": finalPrediction, "Loai_cau": finalType, "Mau_cau_phat_hien": finalPattern, "Do_tin_cay": (finalConfidence * 100).toFixed(0) + '%', "Trang_thai": trangThai, "Ket_qua_du_doan": predictionCorrect ? '✅' : (stats.total > 0 ? '❌' : ''), "Thong_ke": { "tong": stats.total, "dung": stats.correct, "sai": stats.wrong, "ti_le": tiLe }, "id": "@tranhoang2286" };
+                apiResponseData = { "Phien": currentSessionId, "Xuc_xac_1": d1, "Xuc_xac_2": d2, "Xuc_xac_3": d3, "Tong": total, "Ket_qua": result, "Phien_hien_tai": currentSessionId ? parseInt(currentSessionId) + 1 : null, "Du_doan": finalPrediction, "Loai_cau": finalType, "Mau_cau_phat_hien": finalPattern, "Do_tin_cay": (finalConfidence * 100).toFixed(0) + '%', "Trang_thai": trangThai, "Ket_qua_du_doan": predictionCorrect ? '✅' : (stats.total > 0 ? '❌' : ''), "Link_game": "https://web.sunwin.tg/?affId=Sunwin", "Thong_ke": { "tong": stats.total, "dung": stats.correct, "sai": stats.wrong, "ti_le": tiLe }, "id": "@tranhoang2286" };
                 console.log(`\n🎲 Phiên ${apiResponseData.Phien} | KQ: ${result} | Dự đoán: ${finalPrediction} (${(finalConfidence * 100).toFixed(0)}%) ${predictionCorrect ? '✅' : '❌'}`);
                 lastResult = result;
                 currentSessionId = null;
@@ -673,8 +681,8 @@ app.get('/', (req, res) => { res.json(apiResponseData); });
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n🚀 ===== SUNWIN TÀI XỈU API =====`);
     console.log(`🌐 Server: http://0.0.0.0:${PORT}`);
-    console.log(`📌 Endpoint: /api/sieu (giữ nguyên format)`);
-    console.log(`📌 Kiểm tra: /api/status`);
+    console.log(`📌 Endpoint: /api/sieu`);
+    console.log(`🎲 Link game: https://web.sunwin.tg/?affId=Sunwin`);
     console.log(`[🤖] Total models: 84 (21 main + 42 sub + 21 mini)`);
     console.log(`=====================================\n`);
 });
