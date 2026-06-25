@@ -8,9 +8,7 @@ const https = require('https');
 const BASE = "https://aibcr.me";
 const LOGIN_URL = `${BASE}/login`;
 const LOBBY_URL = `${BASE}/ae/lobby`;
-
-// THAY ĐỔI CỐT LÕI: Dùng GETTABLE thay cho GETNEWRESULT để lôi bằng được số PHIÊN cược
-const GETTABLE_URL = `${BASE}/baccarat/gettable`; 
+const GETNEWRESULT_URL = `${BASE}/baccarat/getnewresult`;
 
 const USERNAME = "Hoang2285";
 const PASSWORD = "hoang2010";
@@ -40,7 +38,7 @@ const session = axios.create({
     }
 });
 
-// Bộ quản lý Cookie thông minh - Không lo mất Token session khi lặp dữ liệu
+// Bộ quản lý Cookie thông minh - Fix lỗi ghi đè mất Token
 session.interceptors.request.use(config => {
     if (cookieJar) {
         config.headers.Cookie = cookieJar;
@@ -52,12 +50,14 @@ session.interceptors.response.use(res => {
     const setCookie = res.headers['set-cookie'];
     if (setCookie) {
         let cookieMap = new Map();
+        // Nạp cookie cũ vào map
         if (cookieJar) {
             cookieJar.split(';').forEach(c => {
                 const parts = c.trim().split('=');
                 if (parts[0]) cookieMap.set(parts[0], parts.slice(1).join('='));
             });
         }
+        // Ghi đè cookie mới từ server trả về
         setCookie.forEach(cookie => {
             const rawParts = cookie.split(';')[0];
             const eqIndex = rawParts.indexOf('=');
@@ -67,6 +67,7 @@ session.interceptors.response.use(res => {
                 cookieMap.set(name, value);
             }
         });
+        // Chuyển ngược lại thành chuỗi CookieJar
         let newJar = [];
         cookieMap.forEach((val, key) => {
             if (key) newJar.push(`${key}=${val}`);
@@ -113,6 +114,7 @@ async function login() {
         console.log('[AUTH] Gửi request đăng nhập...');
         const loginResp = await session.post(LOGIN_URL, formData.toString(), { headers });
         
+        // Kiểm tra xem có redirect hoặc trả về thành công không
         if (loginResp.status === 200) {
             return true;
         }
@@ -150,47 +152,45 @@ async function fetchBaccaratData() {
             'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
         };
         
+        // Gửi cả chữ THƯỜNG và chữ HOA để phòng trường hợp backend đổi cấu trúc nhận diện
         const formData = new URLSearchParams();
         formData.append('gameCode', 'ae'); 
         
-        // Gọi API gettable để vét cạn toàn bộ thông tin phiên
-        const resp = await session.post(GETTABLE_URL, formData.toString(), { headers });
+        const resp = await session.post(GETNEWRESULT_URL, formData.toString(), { headers });
         
-        // Trường hợp bị đá session văng ra ngoài sảnh
+        // Trường hợp bị đá session văng ra trang login
         if (resp.data && typeof resp.data === 'string' && (resp.data.includes('login') || resp.data.includes('Sign In'))) {
             throw new Error('SessionExpired');
         }
 
+        // BẮT ĐẦU PHÂN TÍCH VÀ FIX LỖI MẤT BÀN
         if (resp.data && resp.data.data) {
             let listRaw = [];
             if (Array.isArray(resp.data.data)) {
                 listRaw = resp.data.data;
             } else if (typeof resp.data.data === 'object') {
-                listRaw = Object.values(resp.data.data); 
+                listRaw = Object.values(resp.data.data); // Nếu API trả về dạng Object {} thay vì Array []
             }
 
             baccaratData = listRaw.map(item => {
-                // Lọc sạch toàn bộ các biến thể đặt tên key của nhà cái
-                const currentBoot = item.bootNo || item.shoeId || item.shoeNo || item.boot_no || item.bootno || '0';
-                const currentRound = item.roundNo || item.round || item.round_no || item.roundNoStage || item.roundno || '0';
-                
+                // Ép kiểu dữ liệu và quét sạch tất cả các Key có khả năng chứa Số Phiên / Mã Bàn
                 return {
-                    table: String(item.table_name || item.tableCode || item.tableName || item.table || 'Unknown'),
-                    bootNo: String(currentBoot),   // Mã Cơ (Số ID Bộ bài)
-                    roundNo: String(currentRound), // Mã Ván (Số phiên hiện tại trong cơ bài)
-                    result: String(item.result || item.results || item.history || item.cards || ''),
+                    table: String(item.table_name || item.tableName || item.tableCode || item.table || 'Unknown'),
+                    bootNo: String(item.bootNo || item.shoeId || item.shoe_id || item.boot_no || item.bootno || '0'),
+                    roundNo: String(item.roundNo || item.round || item.round_no || item.roundId || item.roundno || '0'),
+                    result: String(item.result || item.results || item.history || ''),
                     status: String(item.status || 'OPEN')
                 };
             });
 
             lastUpdate = new Date().toISOString();
         } else {
-            console.log('[⚠️ CẢNH BÁO] Hệ thống không phản hồi mảng dữ liệu bàn.');
+            console.log('[⚠️ CẢNH BÁO] API không trả về dữ liệu bàn. Raw Response:', resp.data);
         }
         return baccaratData;
     } catch (error) {
         if (error.message === 'SessionExpired' || (error.response && error.response.status === 401)) {
-            console.warn('[⚠️ TÁI CẤP QUYỀN] Mất phiên sảnh! Đang tự động kết nối lại...');
+            console.warn('[⚠️ TÁI CẤP QUYỀN] Session die! Đang đăng nhập lại tự động...');
             const relogin = await login();
             if (relogin) await goToLobby();
         } else {
@@ -200,7 +200,7 @@ async function fetchBaccaratData() {
     }
 }
 
-// Vòng lặp cập nhật liên tục 2.5 giây/lần
+// Vòng lặp ngầm chạy liên tục 2.5 giây/lần
 async function autoUpdate() {
     while (true) {
         try {
@@ -240,7 +240,7 @@ app.get('/api/baccarat/:table', (req, res) => {
     if (found) {
         res.json({ success: true, data: found });
     } else {
-        res.json({ success: false, message: `Không tìm thấy bàn: ${req.params.table}` });
+        res.json({ success: false, message: `Không thấy dữ liệu bàn: ${req.params.table}` });
     }
 });
 
@@ -248,30 +248,30 @@ app.get('/api/baccarat/:table', (req, res) => {
 // KHỞI CHẠY KHỞI ĐỘNG
 // ======================
 async function start() {
-    console.log('=== KHỞI ĐỘNG HỆ THỐNG GIẢI QUYẾT MẤT PHIÊN ===');
+    console.log('=== KHỞI ĐỘNG HỆ THỐNG CRASH-FIX ===');
     const isOk = await login();
     if (!isOk) {
-        console.error('[FATAL] Không thể đăng nhập. Vui lòng check thông tin Acc!');
+        console.error('[FATAL] Đăng nhập thất bại hoàn toàn! Kiểm tra lại tài khoản.');
         process.exit(1);
     }
     console.log('[OK] Đăng nhập thành công.');
     
     await goToLobby();
-    console.log('[OK] Khởi tạo dữ liệu sảnh hoàn tất.');
+    console.log('[OK] Khởi tạo sảnh thành công.');
     
     await fetchBaccaratData();
-    console.log(`[OK] Thành công! Số lượng bàn bóc tách được: ${baccaratData.length}`);
+    console.log(`[OK] Đã quét xong. Tổng số bàn lấy được: ${baccaratData.length}`);
     
-    console.log('\n📊 DANH SÁCH PHIÊN BÀN HIỆN TẠI:');
+    console.log('\n📊 DANH SÁCH BÀN HOẠT ĐỘNG:');
     baccaratData.forEach(item => {
-        console.log(` > Bàn: ${item.table.padEnd(6)} | Phiên: Cơ ${item.bootNo.padEnd(3)} - Ván ${item.roundNo.padEnd(3)} | KQ: ${item.result.substring(0,12)}...`);
+        console.log(` > Bàn: ${item.table.padEnd(6)} | Phiên: Cơ ${item.bootNo.padEnd(3)} - Ván ${item.roundNo.padEnd(3)} | KQ: ${item.result.substring(0,10)}...`);
     });
 
     autoUpdate();
     
     const PORT = 5000;
     app.listen(PORT, '0.0.0.0', () => {
-        console.log(`\n🚀 API ĐANG CHẠY: http://localhost:${PORT}/api/baccarat`);
+        console.log(`\n🚀 API HOẠT ĐỘNG TẠI: http://localhost:${PORT}/api/baccarat`);
     });
 }
 
